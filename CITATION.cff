@@ -1,0 +1,41 @@
+# This CITATION.cff file was generated with cffinit.
+# Visit https://bit.ly/cffinit to generate yours today!
+
+cff-version: 1.2.0
+title: "Tensor Logic: The Language of AI (C++ Implementation)"
+message: >-
+  If you use this software, please cite both the software itself and the
+  original paper by Pedro Domingos.
+type: software
+authors:
+  - given-names: Harshal
+    family-names: Janjani
+    email: harshaljanjaniwork@gmail.com
+    orcid: 'https://orcid.org/0009-0001-0494-1110'
+repository-code: 'https://github.com/harshaljanjani/tensor-logic-cpp'
+abstract: >-
+  A C++ implementation of Tensor Logic based on Pedro Domingos' 
+  research. This framework unifies neural and symbolic AI by 
+  treating logical relations as sparse Boolean tensors and 
+  rules as tensor operations (einsums). It supports 
+  temperature-controlled reasoning, unifying deductive logic 
+  and analogical inference in a single differentiable architecture.
+keywords:
+  - tensor logic
+  - symbolic ai
+  - neurosymbolic ai
+  - sparse tensors
+  - automated reasoning
+  - c++
+license: Apache-2.0
+version: 0.1.0
+date-released: '2025-12-12'
+references:
+  - type: article
+    authors:
+      - family-names: "Domingos"
+        given-names: "Pedro"
+    title: "Tensor Logic: The Language of AI"
+    year: 2025
+    url: "https://arxiv.org/abs/2510.12269"
+    doi: "10.48550/arXiv.2510.12269"
