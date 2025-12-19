@@ -1,6 +1,7 @@
 #ifndef TENSOR_LOGIC_EMBEDDINGS_HPP
 #define TENSOR_LOGIC_EMBEDDINGS_HPP
 
+#include <algorithm>
 #include <cmath>
 #include <random>
 
@@ -179,26 +180,129 @@ class EmbeddedProgram {
         }
     }
 
-    void trace_deduction(const std::string& relation, const std::string& a, const std::string& b) {
-        std::cout << "=== Deductive Trace (T = 0) ===" << std::endl;
-        std::cout << "Query: " << relation << "(" << a << ", " << b << ")" << std::endl;
+    struct ProofStep {
+        std::string description;
+        int depth;
+        bool is_fact;
+    };
 
-        for (const auto& [name, tensor] : symbolic.bool_tensors) {
-            if (name == relation && tensor.contains(Tuple{{a, b}})) {
-                std::cout << "  ✓ Direct fact: " << relation << "(" << a << ", " << b << ")" << std::endl;
-                return;
-            }
+    std::vector<ProofStep> proof_trace;
+
+    bool backward_chain(const std::string& relation, const std::string& a, const std::string& b, int depth = 0) {
+        auto it = symbolic.bool_tensors.find(relation);
+        if (it != symbolic.bool_tensors.end() && it->second.contains(Tuple{{a, b}})) {
+            proof_trace.push_back({relation + "(" + a + ", " + b + ")", depth, true});
+            return true;
         }
 
         for (const auto& eq : symbolic.equations) {
-            if (eq.lhs.name == relation) {
-                std::cout << "  Rule: " << eq.to_string() << std::endl;
+            if (eq.lhs.name != relation) continue;
 
-                // TODO: This is just the bare bones boo-hoo logic; replace it with a proper proof search.
+            if (eq.lhs.indices.size() == 2) {
+                std::unordered_map<std::string, std::string> substitution;
+
+                std::string var_x = eq.lhs.indices[0].name;
+                std::string var_y = eq.lhs.indices[1].name;
+                substitution[var_x] = a;
+                substitution[var_y] = b;
+
+                std::vector<std::string> body_steps;
+                bool all_proven = true;
+
                 for (const auto& body_ref : eq.rhs) {
-                    std::cout << "    Checking: " << body_ref.name << "(.)" << std::endl;
+                    if (body_ref.indices.size() == 2) {
+                        std::string arg1 = body_ref.indices[0].name;
+                        std::string arg2 = body_ref.indices[1].name;
+
+                        std::string val1 = (substitution.count(arg1) > 0) ? substitution[arg1] : arg1;
+                        std::string val2 = (substitution.count(arg2) > 0) ? substitution[arg2] : arg2;
+
+                        if (val1 == arg1 || val2 == arg2) {
+                            auto it_body = symbolic.bool_tensors.find(body_ref.name);
+                            if (it_body != symbolic.bool_tensors.end()) {
+                                bool found = false;
+                                for (const auto& tuple : it_body->second.tuples) {
+                                    std::string cand1 = std::get<std::string>(tuple.values[0]);
+                                    std::string cand2 = std::get<std::string>(tuple.values[1]);
+
+                                    bool match = true;
+                                    std::unordered_map<std::string, std::string> temp_sub = substitution;
+
+                                    if (val1 == arg1) {
+                                        temp_sub[arg1] = cand1;
+                                    } else if (val1 != cand1) {
+                                        match = false;
+                                    }
+
+                                    if (val2 == arg2) {
+                                        temp_sub[arg2] = cand2;
+                                    } else if (val2 != cand2) {
+                                        match = false;
+                                    }
+
+                                    if (match) {
+                                        bool sub_proven =
+                                            backward_chain(body_ref.name, temp_sub.count(arg1) ? temp_sub[arg1] : arg1,
+                                                           temp_sub.count(arg2) ? temp_sub[arg2] : arg2, depth + 1);
+                                        if (sub_proven) {
+                                            substitution = temp_sub;
+                                            found = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                                if (!found) {
+                                    all_proven = false;
+                                    break;
+                                }
+                            } else {
+                                all_proven = false;
+                                break;
+                            }
+                        } else {
+                            if (!backward_chain(body_ref.name, val1, val2, depth + 1)) {
+                                all_proven = false;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (all_proven) {
+                    proof_trace.push_back({relation + "(" + a + ", " + b + ") ← " + eq.to_string(), depth, false});
+                    return true;
                 }
             }
+        }
+
+        return false;
+    }
+
+    void trace_deduction(const std::string& relation, const std::string& a, const std::string& b) {
+        std::cout << "=== Deductive Trace (T = 0) ===" << std::endl;
+        std::cout << "Query: " << relation << "(" << a << ", " << b << ")" << std::endl << std::endl;
+
+        proof_trace.clear();
+        bool proven = backward_chain(relation, a, b, 0);
+
+        if (proven) {
+            std::cout << "Proof found!" << std::endl;
+            std::cout << "Deductive chain:" << std::endl;
+
+            for (size_t i = 0; i < proof_trace.size(); ++i) {
+                const auto& step = proof_trace[i];
+                std::string indent(step.depth * 2, ' ');
+                std::cout << "  " << (i + 1) << ". " << indent;
+                if (step.is_fact) {
+                    std::cout << step.description << "  [Fact]";
+                } else {
+                    std::cout << step.description << "  [Rule]";
+                }
+                std::cout << std::endl;
+            }
+            std::cout << "  ✓ " << relation << "(" << a << ", " << b << ") is proven" << std::endl;
+        } else {
+            std::cout << "No proof found. Query is not derivable from the knowledge base." << std::endl;
         }
     }
 };
