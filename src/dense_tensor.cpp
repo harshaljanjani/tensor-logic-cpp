@@ -65,7 +65,6 @@ DenseTensor DenseTensor::einsum(const DenseTensor& A, const DenseTensor& B,
     }
 
     DenseTensor result("result", result_indices, result_shape);
-    // TODO: Optimize; this O(n^k) approach iterates over all index combinations.
     std::vector<size_t> indices(all_indices.size(), 0);
 
     std::function<void(size_t)> iterate = [&](size_t depth) {
