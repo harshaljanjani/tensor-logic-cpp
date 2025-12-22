@@ -1,7 +1,9 @@
+#include <algorithm>
 #include <iomanip>
 #include <iostream>
 
 #include "embeddings.hpp"
+#include "gnn.hpp"
 #include "tensor_logic.hpp"
 #include "transformer.hpp"
 
@@ -250,36 +252,104 @@ void example_gnn() {
     std::cout << "  Graph structure:  Neig(x, y)\n";
     std::cout << "  Initialization:   Emb[n, 0, d] = X[n, d]\n";
     std::cout << "  MLP:              Z[n, l, d'] = relu(WP[l, d', d] Emb[n, l, d])\n";
-    std::cout << "  Aggregation:      Agg[n, l, d] = Neig(n, n') Z[n', l, d]\n";
+    std::cout << "  Aggregation:      Agg[n, l, d'] = Neig(n, n') Z[n', l, d']\n";
     std::cout << "  Update:           Emb[n, l+1, d] = relu(WAgg Agg + WSelf Emb)\n";
-    std::cout << "  Node class:       Y[n] = sig(WOut[d] Emb[n, L, d])\n\n";
+    std::cout << "  Node class:       Y[n] = softmax(WOut[c, d] Emb[n, L, d])\n\n";
 
-    Program prog;
+    // Create GNN configuration
+    GNNConfig config;
+    config.d_node = 16;
+    config.d_hidden = 32;
+    config.n_layers = 3;
+    config.n_classes = 2;
+    config.use_self_loops = true;
 
-    prog.add_fact("Neig", {"A", "B"});
-    prog.add_fact("Neig", {"B", "A"});
-    prog.add_fact("Neig", {"B", "C"});
-    prog.add_fact("Neig", {"C", "B"});
-    prog.add_fact("Neig", {"C", "A"});
-    prog.add_fact("Neig", {"A", "C"});
+    GNN gnn(config);
 
-    prog.add_fact("Neig", {"A", "D"});
-    prog.add_fact("Neig", {"D", "A"});
+    std::cout << gnn.to_tensor_logic() << "\n";
 
     std::cout << "Graph structure (Neig relation):\n";
     std::cout << "      B\n";
     std::cout << "     / \\\n";
     std::cout << "    A---C    D---A\n\n";
 
-    // Agg[n, d] = Neig(n, n') Z[n', d]
+    // Initialize nodes with random features
+    std::mt19937 feature_rng(123);
+    std::normal_distribution<double> feature_dist(0.0, 1.0);
+
+    auto random_features = [&]() {
+        std::vector<double> features(config.d_node);
+        for (auto& f : features) f = feature_dist(feature_rng);
+        return features;
+    };
+
+    gnn.add_node("A", random_features());
+    gnn.add_node("B", random_features());
+    gnn.add_node("C", random_features());
+    gnn.add_node("D", random_features());
+
+    // Build graph structure
+    gnn.add_edge("A", "B");
+    gnn.add_edge("B", "A");
+    gnn.add_edge("B", "C");
+    gnn.add_edge("C", "B");
+    gnn.add_edge("C", "A");
+    gnn.add_edge("A", "C");
+    gnn.add_edge("A", "D");
+    gnn.add_edge("D", "A");
+
     std::cout << "Message passing as tensor operation:\n";
-    std::cout << "  Agg[n, d] = Neig(n, n') Z[n', d]\n\n";
+    std::cout << "  Agg[n, l, d'] = Neig(n, n') Z[n', l, d']\n\n";
 
     std::cout << "For node A, neighbors are: B, C, D\n";
-    std::cout << "  Agg[A, d] = Z[B, d] + Z[C, d] + Z[D, d]\n\n";
+    std::cout << "  Agg[A, d'] = Z[B, d'] + Z[C, d'] + Z[D, d']\n\n";
 
     std::cout << "For node D, only neighbor is: A\n";
-    std::cout << "  Agg[D, d] = Z[A, d]\n\n";
+    std::cout << "  Agg[D, d'] = Z[A, d']\n\n";
+
+    std::cout << "Running " << config.n_layers << " layers of message passing...\n\n";
+
+    // Perform message passing
+    gnn.forward();
+
+    // Get node classifications
+    auto classifications = gnn.classify_all();
+
+    std::cout << "Node classifications after " << config.n_layers << " message passing layers:\n";
+    for (const auto& [node, probs] : classifications) {
+        std::cout << "  Node " << node << ": [";
+        for (size_t c = 0; c < probs.size(); ++c) {
+            if (c > 0) std::cout << ", ";
+            std::cout << "class_" << c << "=" << std::fixed << std::setprecision(3) << probs[c];
+        }
+        std::cout << "]\n";
+    }
+
+    std::cout << "\nFinal node embeddings Emb[n, L=" << config.n_layers << ", d=" << config.d_node << "]:\n";
+    std::vector<std::string> node_names = {"A", "B", "C", "D"};
+    for (const std::string& node : node_names) {
+        const auto& emb = gnn.get_embedding(node);
+        std::cout << "  Node " << node << ": [";
+        for (size_t i = 0; i < std::min(size_t(5), emb.size()); ++i) {
+            if (i > 0) std::cout << ", ";
+            std::cout << std::fixed << std::setprecision(3) << emb[i];
+        }
+        if (emb.size() > 5) std::cout << ", ...";
+        std::cout << "]\n";
+    }
+
+    // Also demonstrate symbolic reachability
+    std::cout << "\n═══ Symbolic Reachability (Deductive Reasoning) ═══\n\n";
+
+    Program prog;
+    prog.add_fact("Neig", {"A", "B"});
+    prog.add_fact("Neig", {"B", "A"});
+    prog.add_fact("Neig", {"B", "C"});
+    prog.add_fact("Neig", {"C", "B"});
+    prog.add_fact("Neig", {"C", "A"});
+    prog.add_fact("Neig", {"A", "C"});
+    prog.add_fact("Neig", {"A", "D"});
+    prog.add_fact("Neig", {"D", "A"});
 
     TensorEquation reach1;
     reach1.lhs = TensorRef("Reach", {Index("x", true), Index("y", true)}, true);
@@ -308,6 +378,9 @@ void example_gnn() {
         }
     }
     std::cout << "  Reach(D, C)? " << (d_to_c ? "Yes" : "No") << " (via D->A->C)\n";
+
+    std::cout << "\nKey insight: GNNs combine neural (embeddings, weights) and symbolic\n";
+    std::cout << "(graph structure) reasoning in a unified tensor logic framework.\n";
 }
 
 void example_kernel_machine() {
