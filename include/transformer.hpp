@@ -1,6 +1,7 @@
 #ifndef TENSOR_LOGIC_TRANSFORMER_HPP
 #define TENSOR_LOGIC_TRANSFORMER_HPP
 
+#include <algorithm>
 #include <cmath>
 #include <random>
 
@@ -41,6 +42,10 @@ class Transformer {
     // WOut[t, d]
     DenseTensor W_out;
 
+    // gamma (scale) and beta (shift) for each block (attention + feedforward)
+    std::vector<std::vector<double>> ln_gamma_attn, ln_beta_attn;
+    std::vector<std::vector<double>> ln_gamma_ff, ln_beta_ff;
+
     std::mt19937 rng;
 
     Transformer(const TransformerConfig& cfg = TransformerConfig(), unsigned seed = 42) : config(cfg), rng(seed) {
@@ -60,6 +65,10 @@ class Transformer {
         W_O.resize(config.n_blocks);
         W_ff1.resize(config.n_blocks);
         W_ff2.resize(config.n_blocks);
+        ln_gamma_attn.resize(config.n_blocks);
+        ln_beta_attn.resize(config.n_blocks);
+        ln_gamma_ff.resize(config.n_blocks);
+        ln_beta_ff.resize(config.n_blocks);
 
         for (size_t b = 0; b < config.n_blocks; ++b) {
             W_Q[b].resize(config.n_heads);
@@ -83,6 +92,12 @@ class Transformer {
             W_ff2[b] = DenseTensor("Wff2", {"d", "dff"}, {config.d_model, config.d_ff});
             for (auto& v : W_ff1[b].data) v = dist(rng);
             for (auto& v : W_ff2[b].data) v = dist(rng);
+
+            // gamma (scale) initialized to 1, beta (shift) initialized to 0
+            ln_gamma_attn[b].resize(config.d_model, 1.0);
+            ln_beta_attn[b].resize(config.d_model, 0.0);
+            ln_gamma_ff[b].resize(config.d_model, 1.0);
+            ln_beta_ff[b].resize(config.d_model, 0.0);
         }
 
         W_out = DenseTensor("WOut", {"t", "d"}, {config.vocab_size, config.d_model});
@@ -119,15 +134,23 @@ class Transformer {
         return std::max(0.0, x);
     }
 
-    // TODO: Replace this with a full layer normalization implementation.
-    static void layer_norm(std::vector<double>& x) {
-        double mean = 0.0, var = 0.0;
+    void layer_norm(std::vector<double>& x, const std::vector<double>& gamma, const std::vector<double>& beta) {
+        if (x.size() != gamma.size() || x.size() != beta.size()) {
+            throw std::runtime_error("Layer norm parameter size mismatch");
+        }
+
+        double mean = 0.0;
         for (double v : x) mean += v;
         mean /= x.size();
+
+        double var = 0.0;
         for (double v : x) var += (v - mean) * (v - mean);
         var /= x.size();
-        double std_dev = std::sqrt(var + 1e-6);
-        for (auto& v : x) v = (v - mean) / std_dev;
+
+        double std_dev = std::sqrt(var + 1e-6);  // eps for numerical stability
+        for (size_t i = 0; i < x.size(); ++i) {
+            x[i] = gamma[i] * (x[i] - mean) / std_dev + beta[i];
+        }
     }
 
     std::vector<std::vector<double>> forward(const std::vector<size_t>& tokens) {
@@ -232,7 +255,7 @@ class Transformer {
                 }
                 stream[p][d] = input[p][d] + proj;
             }
-            layer_norm(stream[p]);
+            layer_norm(stream[p], ln_gamma_attn[block], ln_beta_attn[block]);
         }
 
         // MLP[b, p] = relu(WP[p, d] Stream[b, p, d])
@@ -258,7 +281,7 @@ class Transformer {
             for (size_t d = 0; d < config.d_model; ++d) {
                 stream[p][d] += ff_out[d];
             }
-            layer_norm(stream[p]);
+            layer_norm(stream[p], ln_gamma_ff[block], ln_beta_ff[block]);
         }
 
         return stream;
